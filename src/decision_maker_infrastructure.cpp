@@ -15,7 +15,11 @@
 
 #include <chrono>
 #include <iostream>
+#include "adore_ros2_msgs/msg/map.hpp"
+#include <adore_dynamics_conversions.hpp>
+#include <adore_map_adapters.hpp>
 
+#include <dynamics/vehicle_state.hpp>
 #include <planning/planning_helpers.hpp>
 #include <std_msgs/msg/string.hpp>
 
@@ -50,6 +54,19 @@ DecisionMakerInfrastructure::run()
   }
 
   publish_infrastructure_position();
+
+  if ( road_map && should_publish_local_map )
+  {
+    if ( now().seconds() - time_of_last_local_map_publication_seconds > time_gab_between_map_publications_seconds )
+    {
+      auto local_map_ptr = std::make_shared<map::Map>( road_map->get_submap( infrastructure_pose, local_map_size, local_map_size) );
+      publisher_local_map->publish( *local_map_ptr );
+      time_of_last_local_map_publication_seconds = now().seconds();
+    }
+  }
+
+  publish_infrastructure_transform();
+  update_dynamic_subscriptions(); 
 }
 
 bool
@@ -140,9 +157,13 @@ void
 DecisionMakerInfrastructure::plan_traffic()
 {
   if( !road_map )
+  {
+    std::cerr << "Decision maker infrastructure has no road map!" << std::endl;
     return;
+  }
 
   latest_traffic_participant_set.remove_old_participants( max_participant_age, now().seconds() );
+
 
   if( latest_traffic_participant_set.participants.empty() )
     return;
@@ -173,16 +194,22 @@ DecisionMakerInfrastructure::create_subscribers()
 void
 DecisionMakerInfrastructure::create_publishers()
 {
-  publisher_planned_traffic         = create_publisher<ParticipantSetAdapter>( planned_traffic_out_topic, 1 );
+  publisher_planned_traffic         = create_publisher<ParticipantSetAdapter>( "/infrastructure/planned_traffic", 1 );
   publisher_infrastructure_position = create_publisher<adore_ros2_msgs::msg::VisualizableObject>( "infrastructure_position", 1 );
   publisher_infrastructure_info     = create_publisher<adore_ros2_msgs::msg::InfrastructureInfo>( "infrastructure_info", 1 );
+
+  if ( should_publish_local_map )
+  {
+    publisher_local_map = create_publisher<MapAdapter>( "local_map", 1 );
+  }
 }
 
 void
 DecisionMakerInfrastructure::load_parameters()
 {
-  planned_traffic_out_topic    = declare_parameter<std::string>( "planned_traffic_out_topic", "/planned_traffic" );
   traffic_participant_in_topic = declare_parameter<std::string>( "traffic_participant_in_topic", "/traffic_participant" );
+
+  should_publish_local_map = declare_parameter<bool>("should_publish_local_map", false);
 
   dt = declare_parameter<double>( "dt", 0.1 );
 
@@ -218,6 +245,8 @@ DecisionMakerInfrastructure::load_parameters()
     RCLCPP_WARN( get_logger(), "Unknown planner_backend '%s', falling back to 'multi_agent_pid'.", planner_backend_str.c_str() );
     planner_backend = PlannerBackend::MultiAgentPlanner;
   }
+
+  tf_transform_broadcaster = std::make_unique<tf2_ros::TransformBroadcaster>( *this );
 
   // Validity area polygon from flat vector<double> [x0,y0,x1,y1,...]
   std::vector<double> validity_area_points;
@@ -303,7 +332,7 @@ DecisionMakerInfrastructure::update_dynamic_subscriptions()
 {
   auto topic_names_and_types = get_topic_names_and_types();
 
-  const std::string topic_name    = traffic_participant_in_topic;
+  const std::string topic_name    = "v2x_traffic_participant";
   const std::string escaped_topic = std::regex_replace( topic_name, std::regex( R"([.^$|()\\[\]{}*+?])" ), R"(\$&)" );
 
   std::regex valid_topic_regex( "^/([^/]+)/" + escaped_topic + "$" );
@@ -337,6 +366,17 @@ DecisionMakerInfrastructure::update_dynamic_subscriptions()
       RCLCPP_INFO( get_logger(), "Subscribed to new vehicle namespace: %s", vehicle_namespace.c_str() );
     }
   }
+}
+
+void DecisionMakerInfrastructure::publish_infrastructure_transform()
+{
+  dynamics::VehicleStateDynamic infrastructure_state;
+  infrastructure_state.x = infrastructure_pose.x;
+  infrastructure_state.y = infrastructure_pose.y;
+  infrastructure_state.yaw_angle = infrastructure_pose.yaw;
+
+  auto infrastructure_frame = dynamics::conversions::vehicle_state_to_transform( infrastructure_state, now(), get_namespace() );
+  tf_transform_broadcaster->sendTransform( infrastructure_frame );
 }
 
 } // namespace adore

@@ -32,11 +32,13 @@
 #include "adore_ros2_msgs/msg/traffic_participant_set.hpp"
 #include "adore_ros2_msgs/msg/traffic_signals.hpp"
 #include "adore_ros2_msgs/msg/visualizable_object.hpp"
+#include <adore_map_adapters.hpp>
 
 #include "planning/multi_agent_PID.hpp"
 #include "planning/multi_agent_planner.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/string.hpp"
+#include "tf2_ros/transform_broadcaster.h"
 
 
 using namespace std::chrono_literals;
@@ -60,16 +62,19 @@ private:
   rclcpp::Publisher<ParticipantSetAdapter>::SharedPtr                    publisher_planned_traffic;
   rclcpp::Publisher<adore_ros2_msgs::msg::VisualizableObject>::SharedPtr publisher_infrastructure_position;
   rclcpp::Publisher<adore_ros2_msgs::msg::InfrastructureInfo>::SharedPtr publisher_infrastructure_info;
+  rclcpp::Publisher<MapAdapter>::SharedPtr publisher_local_map;
 
   using StateSubscriber = rclcpp::Subscription<ParticipantAdapter>::SharedPtr;
   std::unordered_map<std::string, StateSubscriber> traffic_participant_subscribers;
+
+  void publish_infrastructure_transform();
+  std::unique_ptr<tf2_ros::TransformBroadcaster> tf_transform_broadcaster;
 
   std::shared_ptr<map::Map>              road_map = nullptr;
   adore::dynamics::TrafficParticipantSet latest_traffic_participant_set;
   std::string                            overview;
 
   std::string traffic_participant_in_topic = "traffic_participant";
-  std::string planned_traffic_out_topic    = "planned_traffic";
 
   enum class PlannerBackend
   {
@@ -78,6 +83,10 @@ private:
   } planner_backend;
 
 public:
+
+  bool should_publish_local_map = false; // Since publishing of local map is mostly used for visualization, it should be possible to toggle off
+  double time_of_last_local_map_publication_seconds; // To not publish a large local map objects, decision maker infrastructure tracks time since last publication
+  double time_gab_between_map_publications_seconds = 2; // Only publish once every 2 seconds
 
   double              dt                  = 0.1;
   double              local_map_size      = 50;
