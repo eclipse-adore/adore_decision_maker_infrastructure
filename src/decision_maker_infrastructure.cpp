@@ -164,9 +164,11 @@ DecisionMakerInfrastructure::plan_traffic()
 
   latest_traffic_participant_set.remove_old_participants( max_participant_age, now().seconds() );
 
-
   if( latest_traffic_participant_set.participants.empty() )
+  {
+    publisher_planned_traffic->publish( latest_traffic_participant_set );
     return;
+  }
 
   update_routes_for_participants();
 
@@ -194,7 +196,7 @@ DecisionMakerInfrastructure::create_subscribers()
 void
 DecisionMakerInfrastructure::create_publishers()
 {
-  publisher_planned_traffic         = create_publisher<ParticipantSetAdapter>( "/infrastructure/planned_traffic", 1 );
+  publisher_planned_traffic         = create_publisher<ParticipantSetAdapter>( "/infrastructure/observed_traffic", 1 );
   publisher_infrastructure_position = create_publisher<adore_ros2_msgs::msg::VisualizableObject>( "infrastructure_position", 1 );
   publisher_infrastructure_info     = create_publisher<adore_ros2_msgs::msg::InfrastructureInfo>( "infrastructure_info", 1 );
 
